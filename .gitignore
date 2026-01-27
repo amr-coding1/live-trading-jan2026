@@ -1,0 +1,87 @@
+# Config with secrets
+config/config.yaml
+
+# Claude Code
+.claude/
+
+# Data files
+data/executions/*.csv
+data/snapshots/*.json
+data/annotations/*.json
+data/annotations/monthly/*.md
+
+# Generated reports
+reports/monthly/*.pdf
+reports/monthly/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.env.local
+
+# Logs
+logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+
+# Documentation builds
+docs/_build/
+
+# Secrets and credentials
+*.pem
+*.key
+credentials.json

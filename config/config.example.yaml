@@ -1,0 +1,28 @@
+broker:
+  host: "127.0.0.1"
+  port: 7497  # TWS paper: 7497, live: 7496, Gateway: 4001/4002
+  client_id: 1
+  timeout: 30  # Connection timeout in seconds
+  readonly: false  # Set true for read-only connection
+
+paths:
+  executions: "data/executions"
+  annotations: "data/annotations"
+  snapshots: "data/snapshots"
+  reports: "reports/monthly"
+  logs: "logs"
+
+risk:
+  max_position_pct: 0.20  # Max 20% of portfolio in single position
+  max_daily_loss_pct: 0.02  # Stop trading if down 2% in a day
+
+excluded_instrument_types:
+  - "BOND"
+  - "CFD"
+  - "BILL"
+  - "WAR"  # Warrants often have margin implications
+
+logging:
+  level: "INFO"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5

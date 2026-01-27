@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #f8f9fa; }
+        .card { margin-bottom: 1rem; }
+        .stat-value { font-size: 1.8rem; font-weight: bold; }
+        .stat-label { color: #6c757d; font-size: 0.9rem; }
+        .positive { color: #198754; }
+        .negative { color: #dc3545; }
+        .chart-container { height: 300px; }
+        .table-sm td, .table-sm th { padding: 0.4rem; }
+        .refresh-time { font-size: 0.8rem; color: #6c757d; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">Trading Dashboard</span>
+            <span class="text-light refresh-time">Last updated: {{ last_updated }}</span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Summary Stats Row -->
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="stat-label">Total Equity</div>
+                        <div class="stat-value">£{{ "{:,.0f}".format(total_equity) }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="stat-label">Cash Available</div>
+                        <div class="stat-value">£{{ "{:,.0f}".format(cash) }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="stat-label">Today's P&L</div>
+                        <div class="stat-value {{ 'positive' if today_pnl >= 0 else 'negative' }}">
+                            {{ "{:+,.0f}".format(today_pnl) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="stat-label">Total P&L</div>
+                        <div class="stat-value {{ 'positive' if total_pnl >= 0 else 'negative' }}">
+                            {{ "{:+,.0f}".format(total_pnl) }} ({{ "{:+.1f}".format(total_return) }}%)
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Equity Curve and Signal Row -->
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <strong>Equity Curve</strong>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="equityChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <strong>Momentum Signal</strong>
+                        <span class="badge bg-secondary float-end">{{ days_to_rebalance }} days to rebalance</span>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm table-striped mb-0">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Symbol</th>
+                                    <th>Sector</th>
+                                    <th>Mom</th>
+                                    <th>Target</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in signal_data %}
+                                <tr class="{{ 'table-success' if row.target_weight > 0 else '' }}">
+                                    <td>{{ row.rank }}</td>
+                                    <td><strong>{{ row.symbol }}</strong></td>
+                                    <td>{{ row.sector }}</td>
+                                    <td class="{{ 'positive' if row.momentum > 0 else 'negative' }}">
+                                        {{ "{:+.1f}%".format(row.momentum * 100) }}
+                                    </td>
+                                    <td>{{ "{:.0f}%".format(row.target_weight * 100) }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Positions Row -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <strong>Current Positions</strong>
+                        <span class="badge bg-info float-end">{{ positions|length }} positions</span>
+                    </div>
+                    <div class="card-body">
+                        {% if positions %}
+                        <table class="table table-striped table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th class="text-end">Quantity</th>
+                                    <th class="text-end">Avg Cost</th>
+                                    <th class="text-end">Market Price</th>
+                                    <th class="text-end">Market Value</th>
+                                    <th class="text-end">Weight</th>
+                                    <th class="text-end">Unrealized P&L</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for pos in positions %}
+                                <tr>
+                                    <td><strong>{{ pos.symbol }}</strong></td>
+                                    <td class="text-end">{{ "{:,.0f}".format(pos.quantity) }}</td>
+                                    <td class="text-end">£{{ "{:,.2f}".format(pos.avg_cost) }}</td>
+                                    <td class="text-end">£{{ "{:,.2f}".format(pos.market_price) }}</td>
+                                    <td class="text-end">£{{ "{:,.0f}".format(pos.market_value) }}</td>
+                                    <td class="text-end">{{ "{:.1f}%".format(pos.weight * 100) }}</td>
+                                    <td class="text-end {{ 'positive' if pos.unrealized_pnl >= 0 else 'negative' }}">
+                                        £{{ "{:+,.0f}".format(pos.unrealized_pnl) }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <p class="text-muted mb-0">No positions. Portfolio is 100% cash.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="row mt-3 mb-4">
+            <div class="col-12 text-center">
+                <small class="text-muted">
+                    Last snapshot: {{ snapshot_timestamp }} |
+                    <a href="/" class="text-decoration-none">Refresh</a>
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const equityData = {{ equity_data | safe }};
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: equityData.dates,
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: equityData.values,
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: 0,
+                    pointHitRadius: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return '£' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false }
+                    },
+                    y: {
+                        ticks: {
+                            callback: function(value) {
+                                return '£' + value.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
