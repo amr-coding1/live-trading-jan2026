@@ -133,11 +133,16 @@ live-trading-jan2026/
 │   └── analysis.ipynb           # Ad-hoc analysis
 ├── tests/
 │   ├── __init__.py
-│   └── test_performance.py      # Unit tests
+│   ├── test_performance.py      # Performance unit tests
+│   └── test_scheduler.py        # Scheduler unit tests
+├── deploy/
+│   ├── setup.sh                 # Deployment setup script
+│   └── trading-scheduler.service # systemd service file
 ├── logs/                        # Application logs (gitignored)
 └── docs/
     ├── STRATEGY.md              # Strategy documentation
-    └── ARCHITECTURE.md          # Technical documentation
+    ├── ARCHITECTURE.md          # Technical documentation
+    └── OPERATIONS.md            # Operations guide
 ```
 
 ## Installation
@@ -152,7 +157,7 @@ live-trading-jan2026/
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/live-trading-jan2026.git
+git clone https://github.com/amr-coding1/live-trading-jan2026.git
 cd live-trading-jan2026
 
 # 2. Create virtual environment
@@ -215,6 +220,8 @@ python main.py dashboard --port 5050
 | `python main.py dashboard` | Start web dashboard |
 | `python main.py dashboard --port 5050` | Dashboard on custom port |
 | `python main.py scheduler` | Start automated task scheduler |
+| `python main.py weekly-report` | Generate weekly performance report |
+| `python main.py run-job <job_name>` | Manually run a scheduler job |
 
 ## Dashboard
 
@@ -230,8 +237,6 @@ The web dashboard displays real-time portfolio information:
 python main.py dashboard --port 5050
 # Open http://localhost:5050
 ```
-
-![Dashboard Screenshot](docs/dashboard-placeholder.png)
 
 ## Data Schemas
 
@@ -362,6 +367,7 @@ See [WORKFLOW.md](WORKFLOW.md) for detailed operational procedures.
 - [WORKFLOW.md](WORKFLOW.md) - Daily/monthly operational guide
 - [docs/STRATEGY.md](docs/STRATEGY.md) - Strategy design and rationale
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Technical architecture
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) - Deployment and operations guide
 
 ## Testing
 
