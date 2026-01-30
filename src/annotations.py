@@ -43,18 +43,22 @@ def load_annotation(annotations_dir: str, trade_id: str) -> Optional[dict]:
         trade_id: UUID of the trade.
 
     Returns:
-        Annotation dictionary or None if not found.
+        Annotation dictionary or None if not found or on error.
     """
     ann_path = Path(annotations_dir) / f"{trade_id}.json"
 
     if not ann_path.exists():
         return None
 
-    with open(ann_path) as f:
-        return json.load(f)
+    try:
+        with open(ann_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError, OSError) as e:
+        print(f"Error loading annotation {trade_id}: {e}")
+        return None
 
 
-def save_annotation(annotations_dir: str, annotation: dict) -> Path:
+def save_annotation(annotations_dir: str, annotation: dict) -> Optional[Path]:
     """Save annotation to JSON file.
 
     Args:
@@ -62,20 +66,27 @@ def save_annotation(annotations_dir: str, annotation: dict) -> Path:
         annotation: Annotation dictionary.
 
     Returns:
-        Path to saved file.
+        Path to saved file, or None on error.
     """
-    ann_dir = Path(annotations_dir)
-    ann_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        ann_dir = Path(annotations_dir)
+        ann_dir.mkdir(parents=True, exist_ok=True)
 
-    trade_id = annotation["trade_id"]
-    ann_path = ann_dir / f"{trade_id}.json"
+        trade_id = annotation["trade_id"]
+        ann_path = ann_dir / f"{trade_id}.json"
+        temp_path = ann_dir / f"{trade_id}.json.tmp"
 
-    annotation["updated_at"] = datetime.now(timezone.utc).isoformat()
+        annotation["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    with open(ann_path, "w") as f:
-        json.dump(annotation, f, indent=2)
+        # Atomic write using temp file
+        with open(temp_path, "w") as f:
+            json.dump(annotation, f, indent=2)
+        temp_path.replace(ann_path)
 
-    return ann_path
+        return ann_path
+    except (IOError, OSError, KeyError) as e:
+        print(f"Error saving annotation: {e}")
+        return None
 
 
 def prompt_input(prompt: str, default: Optional[str] = None) -> Optional[str]:
@@ -101,35 +112,45 @@ def prompt_input(prompt: str, default: Optional[str] = None) -> Optional[str]:
     return value if value else None
 
 
-def prompt_float(prompt: str, default: Optional[float] = None) -> Optional[float]:
+def prompt_float(prompt: str, default: Optional[float] = None, max_attempts: int = 3) -> Optional[float]:
     """Prompt user for float input.
 
     Args:
         prompt: Prompt text to display.
         default: Default value if user enters nothing.
+        max_attempts: Maximum number of retry attempts.
 
     Returns:
         Float value or None.
     """
     default_str = str(default) if default is not None else None
-    value = prompt_input(prompt, default_str)
 
-    if value is None:
-        return None
+    for attempt in range(max_attempts):
+        value = prompt_input(prompt, default_str)
 
-    try:
-        return float(value)
-    except ValueError:
-        print(f"Invalid number: {value}")
-        return prompt_float(prompt, default)
+        if value is None:
+            return None
+
+        try:
+            return float(value)
+        except ValueError:
+            remaining = max_attempts - attempt - 1
+            if remaining > 0:
+                print(f"Invalid number: {value}. {remaining} attempts remaining.")
+            else:
+                print(f"Invalid number: {value}. Using default.")
+                return default
+
+    return default
 
 
-def prompt_bool(prompt: str, default: Optional[bool] = None) -> Optional[bool]:
+def prompt_bool(prompt: str, default: Optional[bool] = None, max_attempts: int = 3) -> Optional[bool]:
     """Prompt user for yes/no input.
 
     Args:
         prompt: Prompt text to display.
         default: Default value if user enters nothing.
+        max_attempts: Maximum number of retry attempts.
 
     Returns:
         Boolean value or None.
@@ -140,19 +161,26 @@ def prompt_bool(prompt: str, default: Optional[bool] = None) -> Optional[bool]:
     elif default is False:
         default_str = "n"
 
-    value = prompt_input(f"{prompt} (y/n)", default_str)
+    for attempt in range(max_attempts):
+        value = prompt_input(f"{prompt} (y/n)", default_str)
 
-    if value is None:
-        return None
+        if value is None:
+            return None
 
-    value = value.lower()
-    if value in ("y", "yes", "true", "1"):
-        return True
-    elif value in ("n", "no", "false", "0"):
-        return False
-    else:
-        print("Please enter y or n")
-        return prompt_bool(prompt, default)
+        value = value.lower()
+        if value in ("y", "yes", "true", "1"):
+            return True
+        elif value in ("n", "no", "false", "0"):
+            return False
+        else:
+            remaining = max_attempts - attempt - 1
+            if remaining > 0:
+                print(f"Please enter y or n. {remaining} attempts remaining.")
+            else:
+                print("Invalid input. Using default.")
+                return default
+
+    return default
 
 
 def annotate_pre_trade(annotation: dict) -> dict:
@@ -239,7 +267,10 @@ def interactive_annotate(
         annotation = annotate_post_trade(annotation)
 
     save_path = save_annotation(annotations_dir, annotation)
-    print(f"\nAnnotation saved to: {save_path}")
+    if save_path:
+        print(f"\nAnnotation saved to: {save_path}")
+    else:
+        print("\nFailed to save annotation")
 
     return annotation
 

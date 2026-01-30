@@ -204,8 +204,11 @@ def rolling_sharpe(
     rolling_mean = excess.rolling(window).mean()
     rolling_std = excess.rolling(window).std()
 
-    rolling_sharpe = (rolling_mean / rolling_std) * np.sqrt(TRADING_DAYS_PER_YEAR)
-    return rolling_sharpe.dropna()
+    # Avoid division by zero - replace zero std with NaN
+    rolling_std = rolling_std.replace(0, np.nan)
+
+    rolling_sharpe_values = (rolling_mean / rolling_std) * np.sqrt(TRADING_DAYS_PER_YEAR)
+    return rolling_sharpe_values.dropna()
 
 
 def max_drawdown(equity: pd.Series) -> float:
@@ -221,7 +224,13 @@ def max_drawdown(equity: pd.Series) -> float:
         return 0.0
 
     cummax = equity.cummax()
-    drawdown = (equity - cummax) / cummax
+
+    # Avoid division by zero - replace zero cummax with NaN
+    cummax_safe = cummax.replace(0, np.nan)
+    drawdown = (equity - cummax) / cummax_safe
+
+    if drawdown.dropna().empty:
+        return 0.0
 
     return abs(drawdown.min())
 
@@ -273,7 +282,10 @@ def drawdown_series(equity: pd.Series) -> pd.Series:
         return pd.Series(dtype=float)
 
     cummax = equity.cummax()
-    return (equity - cummax) / cummax
+
+    # Avoid division by zero - replace zero cummax with NaN
+    cummax_safe = cummax.replace(0, np.nan)
+    return (equity - cummax) / cummax_safe
 
 
 def load_executions_for_performance(

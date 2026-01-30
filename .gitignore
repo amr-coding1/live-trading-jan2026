@@ -84,4 +84,34 @@ docs/_build/
 # Secrets and credentials
 *.pem
 *.key
+*.p12
+*.pfx
 credentials.json
+*_credentials.json
+*.secret
+secrets/
+tokens/
+.secrets
+service-account*.json
+
+# API keys and tokens
+*.token
+api_key*
+.api_key
+
+# SSH keys
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.pub
+
+# AWS
+.aws/
+aws-credentials
+
+# Backup files that might contain sensitive data
+*.bak
+*.backup
+*.old
+config/*.bak

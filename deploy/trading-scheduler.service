@@ -1,0 +1,37 @@
+[Unit]
+Description=Live Trading Scheduler
+Documentation=https://github.com/yourusername/live-trading-jan2026
+After=network.target
+# Wait for IBKR TWS to be available (if running as a service)
+# After=ibkr-tws.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/home/%i/live-trading-jan2026
+Environment="PATH=/home/%i/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+# Optional: Set webhook URL for failure notifications
+# Environment="SCHEDULER_WEBHOOK_URL=https://your-webhook-url.com/notify"
+
+ExecStart=/usr/bin/python3 main.py scheduler
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=always
+RestartSec=30
+
+# Logging
+StandardOutput=append:/home/%i/live-trading-jan2026/logs/scheduler.stdout.log
+StandardError=append:/home/%i/live-trading-jan2026/logs/scheduler.stderr.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/live-trading-jan2026/data /home/%i/live-trading-jan2026/logs /home/%i/live-trading-jan2026/reports
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

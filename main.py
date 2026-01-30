@@ -118,20 +118,62 @@ def cmd_report(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_weekly_report(args: argparse.Namespace) -> None:
+    """Generate weekly PDF report."""
+    from src.export import generate_weekly_report, get_current_week
+
+    config = load_config()
+
+    week = args.week if args.week else get_current_week()
+    print(f"Generating weekly report for {week}...")
+
+    try:
+        path = generate_weekly_report(
+            year_week=week,
+            snapshots_dir=config["paths"]["snapshots"],
+            executions_dir=config["paths"]["executions"],
+            annotations_dir=config["paths"]["annotations"],
+            output_dir=config["paths"]["reports"],
+        )
+        print(f"Report saved to: {path}")
+    except Exception as e:
+        print(f"Error generating report: {e}")
+        sys.exit(1)
+
+
+def cmd_run_job(args: argparse.Namespace) -> None:
+    """Run a scheduler job immediately."""
+    from src.scheduler import run_job_now
+
+    config = load_config()
+
+    print(f"Running job: {args.job}...")
+
+    try:
+        run_job_now(config, args.job)
+    except Exception as e:
+        print(f"Error running job: {e}")
+        sys.exit(1)
+
+
 def cmd_stats(args: argparse.Namespace) -> None:
     """Print performance statistics."""
     from src.performance import compute_all_metrics, format_performance_report
 
     config = load_config()
 
-    metrics = compute_all_metrics(
-        snapshots_dir=config["paths"]["snapshots"],
-        executions_dir=config["paths"]["executions"],
-        start_date=args.start,
-        end_date=args.end,
-    )
+    try:
+        metrics = compute_all_metrics(
+            snapshots_dir=config["paths"]["snapshots"],
+            executions_dir=config["paths"]["executions"],
+            start_date=args.start,
+            end_date=args.end,
+        )
 
-    print(format_performance_report(metrics))
+        print(format_performance_report(metrics))
+    except Exception as e:
+        print(f"Error computing statistics: {e}")
+        sys.exit(1)
 
 
 def cmd_slippage(args: argparse.Namespace) -> None:
@@ -140,14 +182,18 @@ def cmd_slippage(args: argparse.Namespace) -> None:
 
     config = load_config()
 
-    analysis = analyze_slippage(
-        executions_dir=config["paths"]["executions"],
-        start_date=args.start,
-        end_date=args.end,
-        outlier_threshold_bps=args.threshold,
-    )
+    try:
+        analysis = analyze_slippage(
+            executions_dir=config["paths"]["executions"],
+            start_date=args.start,
+            end_date=args.end,
+            outlier_threshold_bps=args.threshold,
+        )
 
-    print(format_slippage_report(analysis))
+        print(format_slippage_report(analysis, outlier_threshold_bps=args.threshold))
+    except Exception as e:
+        print(f"Error analyzing slippage: {e}")
+        sys.exit(1)
 
 
 def cmd_signal(args: argparse.Namespace) -> None:
@@ -219,7 +265,12 @@ def cmd_scheduler(args: argparse.Namespace) -> None:
 
     config = load_config()
 
-    run_scheduler(config)
+    # Get health port from args or config
+    health_port = args.health_port
+    if health_port is None:
+        health_port = config.get("scheduler", {}).get("health_port", 8080)
+
+    run_scheduler(config, health_port=health_port)
 
 
 def main() -> None:
@@ -282,6 +333,30 @@ Examples:
         help="Month in YYYY-MM format (e.g., 2026-01)",
     )
     report_parser.set_defaults(func=cmd_report)
+
+    # Weekly report command
+    weekly_report_parser = subparsers.add_parser(
+        "weekly-report",
+        help="Generate weekly PDF report",
+    )
+    weekly_report_parser.add_argument(
+        "week",
+        nargs="?",
+        help="Week in YYYY-Www format (e.g., 2026-W05). Defaults to current week.",
+    )
+    weekly_report_parser.set_defaults(func=cmd_weekly_report)
+
+    # Run job command (for manual scheduler job execution)
+    run_job_parser = subparsers.add_parser(
+        "run-job",
+        help="Run a scheduler job immediately",
+    )
+    run_job_parser.add_argument(
+        "job",
+        choices=["snapshot", "signal", "rebalance", "report"],
+        help="Job to run: snapshot, signal, rebalance, or report",
+    )
+    run_job_parser.set_defaults(func=cmd_run_job)
 
     stats_parser = subparsers.add_parser("stats", help="Print performance summary")
     stats_parser.add_argument(
@@ -369,6 +444,13 @@ Examples:
     scheduler_parser = subparsers.add_parser(
         "scheduler",
         help="Start background scheduler for automated tasks",
+    )
+    scheduler_parser.add_argument(
+        "--health-port",
+        type=int,
+        default=None,
+        dest="health_port",
+        help="Port for health check HTTP server (default: 8080)",
     )
     scheduler_parser.set_defaults(func=cmd_scheduler)
 

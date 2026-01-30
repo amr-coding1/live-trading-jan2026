@@ -6,7 +6,8 @@ and generates a trade list for manual execution.
 
 import json
 import logging
-from datetime import datetime
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -81,17 +82,33 @@ def get_current_prices(symbols: list[str]) -> dict[str, float]:
 
     Returns:
         Dictionary mapping symbol to current price.
+
+    Raises:
+        ValueError: If price fetch fails for any required symbol.
     """
     prices = {}
+    failed_symbols = []
 
     for symbol in symbols:
         try:
             ticker = yf.Ticker(symbol)
             hist = ticker.history(period="1d")
             if not hist.empty:
-                prices[symbol] = hist["Close"].iloc[-1]
+                price = hist["Close"].iloc[-1]
+                if price > 0:
+                    prices[symbol] = price
+                else:
+                    logger.warning(f"Invalid price (zero/negative) for {symbol}")
+                    failed_symbols.append(symbol)
+            else:
+                logger.warning(f"No price data returned for {symbol}")
+                failed_symbols.append(symbol)
         except Exception as e:
             logger.warning(f"Failed to get price for {symbol}: {e}")
+            failed_symbols.append(symbol)
+
+    if failed_symbols:
+        logger.error(f"Failed to get prices for: {failed_symbols}")
 
     return prices
 
@@ -125,7 +142,14 @@ def calculate_trades(
         target = target_weights.get(symbol, 0)
         diff = target - current
 
+        price = current_prices.get(symbol, 0)
+
         if abs(diff) < min_threshold:
+            action = "HOLD"
+            shares_to_trade = 0
+        elif price <= 0:
+            # Skip trade if price unavailable - log and continue
+            logger.warning(f"Skipping {symbol}: no valid price available")
             action = "HOLD"
             shares_to_trade = 0
         elif diff > 0:
@@ -134,11 +158,11 @@ def calculate_trades(
             current_value = current * total_equity
             value_diff = target_value - current_value
 
-            price = current_prices.get(symbol, 0)
-            if price > 0:
-                shares_to_trade = int(value_diff / price)
-            else:
-                shares_to_trade = 0
+            # Use math.floor to avoid over-buying
+            shares_to_trade = math.floor(value_diff / price)
+            remainder = value_diff - (shares_to_trade * price)
+            if remainder > 0:
+                logger.debug(f"{symbol}: {remainder:.2f} cash remainder from rounding")
         else:
             action = "SELL"
             current_shares = current_positions.get(symbol, 0)
@@ -146,12 +170,9 @@ def calculate_trades(
             current_value = current * total_equity
             value_diff = current_value - target_value
 
-            price = current_prices.get(symbol, 0)
-            if price > 0:
-                shares_to_sell = int(value_diff / price)
-                shares_to_trade = min(shares_to_sell, current_shares)
-            else:
-                shares_to_trade = 0
+            # Use math.floor to avoid over-selling
+            shares_to_sell = math.floor(value_diff / price)
+            shares_to_trade = min(shares_to_sell, current_shares)
 
         trades.append({
             "symbol": symbol,

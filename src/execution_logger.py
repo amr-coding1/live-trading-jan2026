@@ -164,7 +164,8 @@ class IBKRConnection:
 
     def __enter__(self):
         """Context manager entry."""
-        self.connect()
+        if not self.connect():
+            raise ConnectionError("Failed to connect to IBKR in context manager")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -289,19 +290,36 @@ def pull_executions(
     annotations = load_annotations(Path(config["paths"]["annotations"]))
     excluded_types = config.get("excluded_instrument_types", [])
 
-    fills = ib.fills()
-    logger.info(f"Retrieved {len(fills)} fills from IBKR")
+    try:
+        fills = ib.fills()
+        logger.info(f"Retrieved {len(fills)} fills from IBKR")
+    except Exception as e:
+        logger.error(f"Failed to retrieve fills from IBKR: {e}")
+        return pd.DataFrame(columns=[
+            "trade_id", "timestamp", "symbol", "asset_class", "side",
+            "quantity", "intended_price", "fill_price", "slippage_bps",
+            "commission", "commission_currency"
+        ])
 
     records = []
     for fill in fills:
-        if since and fill.execution.time < since:
+        try:
+            if since and fill.execution.time < since:
+                continue
+
+            record = fill_to_record(fill, annotations, excluded_types)
+            if record:
+                records.append(record)
+        except Exception as e:
+            logger.warning(f"Failed to process fill: {e}")
             continue
 
-        record = fill_to_record(fill, annotations, excluded_types)
-        if record:
-            records.append(record)
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=[
+        "trade_id", "timestamp", "symbol", "asset_class", "side",
+        "quantity", "intended_price", "fill_price", "slippage_bps",
+        "commission", "commission_currency"
+    ])
 
-    df = pd.DataFrame(records)
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.sort_values("timestamp")
@@ -312,6 +330,8 @@ def pull_executions(
 
 def save_executions(df: pd.DataFrame, output_dir: str) -> Path:
     """Save executions to dated CSV file.
+
+    Uses atomic write with temp file to prevent corruption.
 
     Args:
         df: DataFrame of executions.
@@ -325,12 +345,19 @@ def save_executions(df: pd.DataFrame, output_dir: str) -> Path:
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     file_path = output_path / f"{date_str}.csv"
+    temp_path = output_path / f"{date_str}.csv.tmp"
 
     if file_path.exists():
-        existing = pd.read_csv(file_path)
-        df = pd.concat([existing, df]).drop_duplicates(subset=["trade_id"])
+        try:
+            existing = pd.read_csv(file_path)
+            df = pd.concat([existing, df]).drop_duplicates(subset=["trade_id"])
+        except Exception as e:
+            logger.warning(f"Failed to read existing file, overwriting: {e}")
 
-    df.to_csv(file_path, index=False)
+    # Atomic write using temp file
+    df.to_csv(temp_path, index=False)
+    temp_path.replace(file_path)
+
     logger.info(f"Saved executions to {file_path}")
     return file_path
 
@@ -344,17 +371,64 @@ def get_portfolio_snapshot(ib: IB) -> dict:
     Returns:
         Portfolio snapshot dictionary.
     """
-    account_values = {av.tag: av.value for av in ib.accountValues()}
+    try:
+        account_values = {av.tag: av.value for av in ib.accountValues()}
+    except Exception as e:
+        logger.error(f"Failed to get account values: {e}")
+        account_values = {}
 
     positions = []
-    for pos in ib.positions():
-        ib.qualifyContracts(pos.contract)
-        ticker = ib.reqMktData(pos.contract, "", False, False)
-        ib.sleep(1)
+    try:
+        ib_positions = ib.positions()
+    except Exception as e:
+        logger.error(f"Failed to get positions: {e}")
+        ib_positions = []
 
+    for pos in ib_positions:
+        ib.qualifyContracts(pos.contract)
+
+        # First try live market data (type 1)
+        ib.reqMarketDataType(1)
+        ticker = ib.reqMktData(pos.contract, "", False, False)
+        ib.sleep(2)  # Wait for market data
+
+        # Try multiple price sources before falling back to avg_cost
         market_price = ticker.marketPrice()
-        if market_price != market_price:
-            market_price = pos.avgCost
+        price_source = "market"
+
+        if market_price != market_price:  # NaN check - try delayed data
+            ib.cancelMktData(pos.contract)
+
+            # Switch to delayed data (type 3) and retry
+            ib.reqMarketDataType(3)
+            ticker = ib.reqMktData(pos.contract, "", False, False)
+            ib.sleep(2)
+
+            market_price = ticker.marketPrice()
+            if market_price == market_price:  # Got delayed data
+                price_source = "delayed"
+            else:
+                # Try last traded price
+                if ticker.last and ticker.last == ticker.last:
+                    market_price = ticker.last
+                    price_source = "delayed_last"
+                # Try close price
+                elif ticker.close and ticker.close == ticker.close:
+                    market_price = ticker.close
+                    price_source = "close"
+                # Try bid/ask midpoint
+                elif ticker.bid and ticker.ask and ticker.bid == ticker.bid and ticker.ask == ticker.ask:
+                    market_price = (ticker.bid + ticker.ask) / 2
+                    price_source = "mid"
+                # Final fallback to avg_cost
+                else:
+                    market_price = pos.avgCost
+                    price_source = "avg_cost"
+                    logger.warning(
+                        f"No market data for {pos.contract.symbol}, using avg_cost as fallback"
+                    )
+
+        logger.debug(f"{pos.contract.symbol}: price={market_price} (source={price_source})")
 
         market_value = pos.position * market_price
         unrealized_pnl = market_value - (pos.position * pos.avgCost)
@@ -366,6 +440,7 @@ def get_portfolio_snapshot(ib: IB) -> dict:
             "market_price": market_price,
             "market_value": market_value,
             "unrealized_pnl": unrealized_pnl,
+            "price_source": price_source,  # Track where price came from
         })
 
         ib.cancelMktData(pos.contract)

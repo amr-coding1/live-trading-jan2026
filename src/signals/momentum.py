@@ -5,13 +5,16 @@ for sector ETFs and ranks them to generate target portfolio weights.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+# Minimum momentum threshold - don't buy if all sectors are negative
+MIN_MOMENTUM_THRESHOLD = -0.20  # -20%
 
 # UK-listed UCITS sector ETFs on London Stock Exchange
 SECTOR_ETFS = [
@@ -62,13 +65,16 @@ def download_prices(
     Args:
         symbols: List of ticker symbols.
         months: Number of months of history to download.
-        end_date: End date for data. Defaults to today.
+        end_date: End date for data. Defaults to today (UTC).
 
     Returns:
         DataFrame with adjusted close prices indexed by date.
+
+    Raises:
+        ValueError: If no data could be downloaded for any symbol.
     """
     if end_date is None:
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
 
     start_date = end_date - timedelta(days=months * 31 + 10)
 
@@ -83,6 +89,9 @@ def download_prices(
             auto_adjust=True,
         )
 
+        if data.empty:
+            raise ValueError("No price data downloaded from yfinance")
+
         if isinstance(data.columns, pd.MultiIndex):
             prices = data["Close"]
         else:
@@ -91,7 +100,15 @@ def download_prices(
 
         prices = prices.dropna(how="all")
 
-        logger.info(f"Downloaded {len(prices)} days of price data")
+        # Validate all symbols have data
+        missing_symbols = [s for s in symbols if s not in prices.columns or prices[s].isna().all()]
+        if missing_symbols:
+            logger.warning(f"Missing data for symbols: {missing_symbols}")
+
+        if prices.empty:
+            raise ValueError("No valid price data after cleaning")
+
+        logger.info(f"Downloaded {len(prices)} days of price data for {len(prices.columns)} symbols")
         return prices
 
     except Exception as e:
@@ -160,21 +177,38 @@ def rank_by_momentum(momentum: pd.Series) -> pd.DataFrame:
 def generate_target_weights(
     ranked: pd.DataFrame,
     top_n: int = 3,
+    min_momentum: float = MIN_MOMENTUM_THRESHOLD,
 ) -> pd.DataFrame:
     """Generate target portfolio weights for top N sectors.
 
     Args:
         ranked: DataFrame with ranked symbols.
         top_n: Number of top sectors to include.
+        min_momentum: Minimum momentum to allocate (avoids buying losers in crash).
 
     Returns:
         DataFrame with symbol and target_weight columns.
     """
     ranked = ranked.copy()
 
-    weight = 1.0 / top_n
+    # Only allocate to sectors above minimum momentum threshold
+    eligible = ranked[
+        (ranked["rank"] <= top_n) &
+        (ranked["momentum_12_1"] >= min_momentum)
+    ]
+
+    if len(eligible) == 0:
+        logger.warning(f"No sectors meet minimum momentum threshold of {min_momentum:.1%}")
+        ranked["target_weight"] = 0.0
+        return ranked
+
+    # Equal weight among eligible sectors
+    weight = 1.0 / len(eligible)
     ranked["target_weight"] = 0.0
-    ranked.loc[ranked["rank"] <= top_n, "target_weight"] = weight
+    ranked.loc[eligible.index, "target_weight"] = weight
+
+    if len(eligible) < top_n:
+        logger.info(f"Only {len(eligible)} sectors meet momentum threshold, holding {(1 - len(eligible) * weight):.1%} cash")
 
     return ranked
 
@@ -202,7 +236,7 @@ def generate_momentum_signal(
         symbols = SECTOR_ETFS
 
     if end_date is None:
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
 
     prices = download_prices(symbols, months=13, end_date=end_date)
 

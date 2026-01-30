@@ -277,11 +277,12 @@ def analyze_slippage(
     }
 
 
-def format_slippage_report(analysis: dict) -> str:
+def format_slippage_report(analysis: dict, outlier_threshold_bps: float = 10.0) -> str:
     """Format slippage analysis as readable text report.
 
     Args:
         analysis: Output from analyze_slippage().
+        outlier_threshold_bps: Threshold used for outlier detection.
 
     Returns:
         Formatted text report.
@@ -327,7 +328,7 @@ def format_slippage_report(analysis: dict) -> str:
         lines.append("")
 
     if not analysis["outliers"].empty:
-        lines.append(f"OUTLIER TRADES (>{10} bps)")
+        lines.append(f"OUTLIER TRADES (>{outlier_threshold_bps:.0f} bps)")
         lines.append("-" * 30)
         for _, row in analysis["outliers"].head(10).iterrows():
             lines.append(

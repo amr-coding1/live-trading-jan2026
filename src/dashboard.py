@@ -6,6 +6,8 @@ in a simple web interface on localhost:5000.
 
 import json
 import logging
+import os
+import html
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -35,6 +37,24 @@ def create_app(config: dict) -> Flask:
         __name__,
         template_folder=str(Path(__file__).parent.parent / "templates"),
     )
+
+    # Security configuration
+    app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
+
+    # Security headers middleware
+    @app.after_request
+    def add_security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data:; "
+            "font-src 'self' https://cdn.jsdelivr.net;"
+        )
+        return response
 
     @app.route("/")
     def dashboard():
@@ -179,6 +199,14 @@ def get_dashboard_data(config: dict) -> dict:
 
     days_to_rebalance = calculate_days_to_rebalance()
 
+    # Sanitize string values to prevent XSS
+    def sanitize_str(val):
+        if isinstance(val, str):
+            return html.escape(val)
+        return val
+
+    sanitized_snapshot_timestamp = sanitize_str(snapshot_timestamp)
+
     return {
         "total_equity": total_equity,
         "cash": cash,
@@ -189,7 +217,7 @@ def get_dashboard_data(config: dict) -> dict:
         "equity_data": json.dumps(equity_data),
         "signal_data": signal_data,
         "days_to_rebalance": days_to_rebalance,
-        "snapshot_timestamp": snapshot_timestamp,
+        "snapshot_timestamp": sanitized_snapshot_timestamp,
         "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
