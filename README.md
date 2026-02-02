@@ -117,6 +117,7 @@ live-trading-jan2026/
 │   ├── export.py                # Monthly PDF report generation
 │   ├── dashboard.py             # Flask web dashboard
 │   ├── scheduler.py             # Automated task scheduling
+│   ├── notifications.py         # Email notification system
 │   ├── signals/
 │   │   ├── __init__.py
 │   │   ├── momentum.py          # 12-1 momentum signal generator
@@ -274,7 +275,7 @@ python main.py kill-switch deactivate
 
 ### Dashboard Signals Page
 
-View signal history at `http://localhost:5000/signals`:
+View signal history at `http://localhost:5050/signals`:
 
 - Historical signals with rankings
 - Trade decisions (buy/sell)
@@ -303,6 +304,34 @@ python main.py scheduler
 4. **Turnover limits** - Max 50% daily turnover
 5. **Confirmation prompts** - Live mode requires "CONFIRM"
 6. **Full audit trail** - Every decision logged to `data/signals/`
+
+### Email Notifications
+
+The system can send email notifications for daily summaries, weekly reports, and monthly reports.
+
+#### Setup
+
+Add to `config/config.yaml`:
+
+```yaml
+email:
+  enabled: true
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  sender_email: "your-email@gmail.com"
+  sender_password: "your-app-password"  # Use Gmail App Password
+  recipient_email: "your-email@gmail.com"
+```
+
+> **Note**: For Gmail, generate an App Password at https://myaccount.google.com/apppasswords
+
+#### Notification Types
+
+| Type | Trigger | Contents |
+|------|---------|----------|
+| Daily Summary | After execute signals job | Portfolio value, P&L, top sectors, trades executed |
+| Weekly Report | Sunday after weekly report job | Week's performance, stats, PDF attachment |
+| Monthly Report | After monthly report generation | Month's performance, PDF attachment |
 
 ## CLI Commands
 

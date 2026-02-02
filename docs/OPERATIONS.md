@@ -16,6 +16,70 @@ python main.py scheduler
 
 ## Autonomous Operation
 
+### Using LaunchAgent (Recommended for macOS)
+
+The scheduler can run automatically on login using macOS LaunchAgent.
+
+```bash
+# Create the LaunchAgent plist
+cat > ~/Library/LaunchAgents/com.trading.scheduler.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading.scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/anaconda3/bin/python</string>
+        <string>/path/to/live-trading-jan2026/main.py</string>
+        <string>scheduler</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/live-trading-jan2026</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/live-trading-jan2026/logs/scheduler.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/path/to/live-trading-jan2026/logs/scheduler_error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/anaconda3/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+# Update paths in the plist to match your setup
+# Then load the agent:
+launchctl load ~/Library/LaunchAgents/com.trading.scheduler.plist
+
+# To check status:
+launchctl list | grep trading
+
+# To stop:
+launchctl unload ~/Library/LaunchAgents/com.trading.scheduler.plist
+
+# To restart:
+launchctl unload ~/Library/LaunchAgents/com.trading.scheduler.plist
+launchctl load ~/Library/LaunchAgents/com.trading.scheduler.plist
+```
+
+**Key settings:**
+- `RunAtLoad: true` - Starts automatically on login
+- `KeepAlive: true` - Restarts automatically if it crashes
+
 ### Using systemd (Recommended for Linux)
 
 ```bash
@@ -97,13 +161,42 @@ The webhook receives JSON payloads:
 }
 ```
 
+### Email Notifications
+
+The scheduler can send email notifications for daily summaries and reports.
+
+**Configuration** (`config/config.yaml`):
+
+```yaml
+email:
+  enabled: true
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  sender_email: "your-email@gmail.com"
+  sender_password: "your-app-password"
+  recipient_email: "your-email@gmail.com"
+```
+
+**Email types:**
+
+| Type | When | Contents |
+|------|------|----------|
+| Daily Summary | After execute signals | Portfolio value, daily P&L, trades executed |
+| Weekly Report | After weekly report job | Week's stats with PDF attachment |
+| Monthly Report | After monthly report job | Month's stats with PDF attachment |
+
+> **Gmail Setup**: Use an App Password from https://myaccount.google.com/apppasswords
+
 ## Scheduled Jobs
 
 | Job | Schedule | Description |
 |-----|----------|-------------|
 | Daily Snapshot | 16:35 UTC | Saves portfolio state after LSE close |
+| Execute Signals | 16:40 UTC | Runs signal-to-execution pipeline (respects dry_run config) |
+| Daily Email Summary | 16:45 UTC | Sends daily summary email (if enabled) |
 | Weekly Rebalance | Sunday 20:00 UTC | Generates momentum signal & trade recommendations |
 | Weekly Report | Sunday 21:00 UTC | Generates PDF report for the previous week |
+| Monthly Report | 1st of month 22:00 UTC | Generates monthly PDF report |
 
 The weekly schedule runs on Sunday evening to prepare for Monday trading.
 
