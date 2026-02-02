@@ -25,6 +25,7 @@ from .signals.rebalance import generate_rebalance_trades, format_rebalance_repor
 from .export import generate_weekly_report, get_current_week
 from .execution.engine import ExecutionEngine, format_execution_report
 from .execution.risk_manager import KillSwitchActive
+from .notifications import EmailNotifier, get_daily_summary_data
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +545,191 @@ def job_execute_signals(config: dict, status: Optional[SchedulerStatus] = None) 
         send_notification(config, "Scheduler Job Failed: execute_signals", error_msg)
 
 
+def job_daily_email(config: dict, status: Optional[SchedulerStatus] = None) -> None:
+    """Send daily summary email.
+
+    Args:
+        config: Configuration dictionary.
+        status: Optional SchedulerStatus for tracking.
+    """
+    sched_logger = logging.getLogger("scheduler")
+    job_name = "daily_email"
+
+    if status:
+        status.job_started(job_name)
+
+    sched_logger.info("Starting daily email job")
+
+    try:
+        notifier = EmailNotifier(config)
+
+        if not notifier.enabled:
+            sched_logger.info("Email notifications disabled, skipping")
+            if status:
+                status.job_completed(job_name, success=True, message="Disabled")
+            return
+
+        # Get daily summary data
+        signal_data, portfolio_data, trades_executed = get_daily_summary_data(config)
+
+        # Send email
+        success = notifier.send_daily_summary(signal_data, portfolio_data, trades_executed)
+
+        if status:
+            status.job_completed(job_name, success=success, message="Sent" if success else "Failed")
+        sched_logger.info(f"Daily email {'sent' if success else 'failed'}")
+
+    except Exception as e:
+        error_msg = f"Daily email job failed: {e}"
+        sched_logger.error(error_msg)
+        if status:
+            status.job_completed(job_name, success=False, message=str(e))
+
+
+def job_weekly_email(config: dict, status: Optional[SchedulerStatus] = None) -> None:
+    """Send weekly report email with PDF attachment.
+
+    Args:
+        config: Configuration dictionary.
+        status: Optional SchedulerStatus for tracking.
+    """
+    sched_logger = logging.getLogger("scheduler")
+    job_name = "weekly_email"
+
+    if status:
+        status.job_started(job_name)
+
+    sched_logger.info("Starting weekly email job")
+
+    try:
+        notifier = EmailNotifier(config)
+
+        if not notifier.enabled:
+            sched_logger.info("Email notifications disabled, skipping")
+            if status:
+                status.job_completed(job_name, success=True, message="Disabled")
+            return
+
+        # Get week info
+        now = datetime.now(timezone.utc)
+        prev_week = now - timedelta(days=7)
+        week_start = (prev_week - timedelta(days=prev_week.weekday())).strftime("%Y-%m-%d")
+        week_end = (prev_week + timedelta(days=6 - prev_week.weekday())).strftime("%Y-%m-%d")
+
+        # Find latest weekly report PDF
+        reports_dir = Path(config["paths"]["reports"])
+        pdf_files = sorted(reports_dir.glob("*.pdf"), reverse=True)
+        pdf_path = pdf_files[0] if pdf_files else None
+
+        # Get stats (basic for now)
+        from .performance import load_snapshots, compute_equity_curve, total_return
+        snapshots = load_snapshots(config["paths"]["snapshots"])
+        if len(snapshots) >= 2:
+            weekly_return = ((snapshots.iloc[-1]["total_equity"] / snapshots.iloc[-7]["total_equity"]) - 1) * 100 if len(snapshots) > 7 else 0
+        else:
+            weekly_return = 0
+
+        stats = {
+            "weekly_return_pct": weekly_return,
+            "total_equity": snapshots.iloc[-1]["total_equity"] if len(snapshots) > 0 else 0,
+            "sharpe_ratio": "N/A",
+            "max_drawdown_pct": 0,
+            "win_rate": 0,
+        }
+
+        # Get trades from signals
+        from .execution.signal_logger import SignalLogger
+        signals_dir = config.get("signals", {}).get("log_dir", "data/signals")
+        signal_logger = SignalLogger(signals_dir)
+        signals = signal_logger.get_signals_history(limit=7)
+        trades = []
+        for sig in signals:
+            trades.extend(sig.get("trades", []))
+
+        success = notifier.send_weekly_report(week_start, week_end, stats, trades, pdf_path)
+
+        if status:
+            status.job_completed(job_name, success=success, message="Sent" if success else "Failed")
+        sched_logger.info(f"Weekly email {'sent' if success else 'failed'}")
+
+    except Exception as e:
+        error_msg = f"Weekly email job failed: {e}"
+        sched_logger.error(error_msg)
+        if status:
+            status.job_completed(job_name, success=False, message=str(e))
+
+
+def job_monthly_email(config: dict, status: Optional[SchedulerStatus] = None) -> None:
+    """Send monthly report email with PDF attachment.
+
+    Args:
+        config: Configuration dictionary.
+        status: Optional SchedulerStatus for tracking.
+    """
+    sched_logger = logging.getLogger("scheduler")
+    job_name = "monthly_email"
+
+    if status:
+        status.job_started(job_name)
+
+    sched_logger.info("Starting monthly email job")
+
+    try:
+        notifier = EmailNotifier(config)
+
+        if not notifier.enabled:
+            sched_logger.info("Email notifications disabled, skipping")
+            if status:
+                status.job_completed(job_name, success=True, message="Disabled")
+            return
+
+        # Get previous month
+        now = datetime.now(timezone.utc)
+        first_of_month = now.replace(day=1)
+        last_month = first_of_month - timedelta(days=1)
+        month_str = last_month.strftime("%Y-%m")
+
+        # Try to generate monthly report
+        try:
+            from .export import generate_monthly_report
+            pdf_path = generate_monthly_report(
+                month=month_str,
+                snapshots_dir=config["paths"]["snapshots"],
+                executions_dir=config["paths"]["executions"],
+                annotations_dir=config["paths"]["annotations"],
+                output_dir=config["paths"]["reports"],
+            )
+        except Exception as e:
+            sched_logger.warning(f"Could not generate monthly report: {e}")
+            pdf_path = None
+
+        # Get stats
+        from .performance import load_snapshots
+        snapshots = load_snapshots(config["paths"]["snapshots"])
+
+        stats = {
+            "monthly_return_pct": 0,  # Would need more calculation
+            "total_equity": snapshots.iloc[-1]["total_equity"] if len(snapshots) > 0 else 0,
+            "trade_count": 0,
+            "sharpe_ratio": "N/A",
+            "max_drawdown_pct": 0,
+            "win_rate": 0,
+            "current_positions": [],
+        }
+
+        success = notifier.send_monthly_report(month_str, stats, pdf_path)
+
+        if status:
+            status.job_completed(job_name, success=success, message="Sent" if success else "Failed")
+        sched_logger.info(f"Monthly email {'sent' if success else 'failed'}")
+
+    except Exception as e:
+        error_msg = f"Monthly email job failed: {e}"
+        sched_logger.error(error_msg)
+        if status:
+            status.job_completed(job_name, success=False, message=str(e))
+
+
 def run_scheduler(config: dict, health_port: int = 8080) -> None:
     """Start the background scheduler with health monitoring.
 
@@ -602,6 +788,34 @@ def run_scheduler(config: dict, health_port: int = 8080) -> None:
     )
     sched_logger.info(f"Scheduled: Weekly report on {rebalance_day} at {report_time} UTC")
 
+    # Email notification jobs
+    email_config = config.get("email", {})
+    if email_config.get("enabled", False):
+        daily_email_time = email_config.get("daily_summary_time", "17:00")
+        weekly_email_day = email_config.get("weekly_report_day", "sunday")
+        weekly_email_time = email_config.get("weekly_report_time", "21:30")
+        monthly_email_day = email_config.get("monthly_report_day", 1)
+        monthly_email_time = email_config.get("monthly_report_time", "09:00")
+
+        # Daily email summary (after execution completes)
+        schedule.every().day.at(daily_email_time).do(job_daily_email, config=config, status=status)
+        sched_logger.info(f"Scheduled: Daily email at {daily_email_time} UTC")
+
+        # Weekly email with report (after weekly report generated)
+        getattr(schedule.every(), weekly_email_day).at(weekly_email_time).do(
+            job_weekly_email, config=config, status=status
+        )
+        sched_logger.info(f"Scheduled: Weekly email on {weekly_email_day} at {weekly_email_time} UTC")
+
+        # Monthly email (1st of month)
+        # Note: schedule doesn't support day-of-month directly, so we check in job
+        schedule.every().day.at(monthly_email_time).do(
+            lambda: job_monthly_email(config, status) if datetime.now(timezone.utc).day == monthly_email_day else None
+        )
+        sched_logger.info(f"Scheduled: Monthly email on day {monthly_email_day} at {monthly_email_time} UTC")
+    else:
+        sched_logger.info("Email notifications disabled")
+
     sched_logger.info("Scheduler started. Press Ctrl+C to stop.")
     print("Scheduler started. Press Ctrl+C to stop.")
     print("Scheduled jobs:")
@@ -609,6 +823,13 @@ def run_scheduler(config: dict, health_port: int = 8080) -> None:
     print(f"  - Daily execution at {execute_time} UTC (mode: {exec_mode})")
     print(f"  - Weekly rebalance on {rebalance_day} at {rebalance_time} UTC")
     print(f"  - Weekly report on {rebalance_day} at {report_time} UTC")
+
+    if email_config.get("enabled", False):
+        print(f"  - Daily email at {email_config.get('daily_summary_time', '17:00')} UTC")
+        print(f"  - Weekly email on {email_config.get('weekly_report_day', 'sunday')} at {email_config.get('weekly_report_time', '21:30')} UTC")
+        print(f"  - Monthly email on day {email_config.get('monthly_report_day', 1)} at {email_config.get('monthly_report_time', '09:00')} UTC")
+        print(f"\nEmail: {email_config.get('recipient_email', 'not configured')}")
+
     print(f"\nHealth check: http://127.0.0.1:{health_port}/health")
     print(f"Status JSON: http://127.0.0.1:{health_port}/status")
 
