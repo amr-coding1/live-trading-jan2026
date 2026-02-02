@@ -9,6 +9,8 @@ data/executions/*.csv
 data/snapshots/*.json
 data/annotations/*.json
 data/annotations/monthly/*.md
+data/signals/*.json
+data/.kill_switch
 
 # Generated reports
 reports/monthly/*.pdf
@@ -58,6 +60,7 @@ env/
 
 # Logs
 logs/*.log
+logs/*.json
 
 # OS
 .DS_Store

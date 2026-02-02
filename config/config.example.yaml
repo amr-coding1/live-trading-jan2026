@@ -26,3 +26,38 @@ logging:
   level: "INFO"
   max_bytes: 10485760  # 10MB
   backup_count: 5
+
+# Automated execution settings
+execution:
+  mode: "dry_run"              # "dry_run" (default) or "live"
+  order_type: "MOC"            # "MKT", "MOC" (market-on-close), "LMT" (limit)
+  limit_offset_bps: 10         # For limit orders: offset from mid in basis points
+  fill_timeout: 300            # Seconds to wait for fill confirmation
+
+# Position sizing configuration
+position_sizing:
+  top_n: 3                     # Number of top sectors to hold
+  exit_rank_threshold: 5       # Exit when rank drops below this
+  min_trade_threshold: 0.02    # Minimum weight difference to trigger trade (2%)
+  min_trade_shares: 1          # Minimum trade size in shares
+  min_trade_value: 100         # Minimum trade value in USD
+
+# Risk limits and safeguards
+risk_limits:
+  max_position_pct: 0.25       # Maximum 25% in single position
+  max_turnover_pct: 0.50       # Maximum 50% daily turnover
+  kill_switch_file: "data/.kill_switch"
+
+# Signal logging
+signals:
+  log_dir: "data/signals"
+  retention_days: 365
+
+# Scheduler settings
+scheduler:
+  health_port: 8080
+  snapshot_time: "16:35"       # UTC - after LSE close
+  execute_time: "16:40"        # UTC - after snapshot
+  rebalance_day: "sunday"
+  rebalance_time: "20:00"
+  report_time: "21:00"

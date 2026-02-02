@@ -13,6 +13,7 @@ A systematic trading infrastructure for building a verifiable live track record,
 - [Project Structure](#project-structure)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Automated Execution](#automated-execution)
 - [CLI Commands](#cli-commands)
 - [Dashboard](#dashboard)
 - [Data Schemas](#data-schemas)
@@ -116,15 +117,24 @@ live-trading-jan2026/
 │   ├── export.py                # Monthly PDF report generation
 │   ├── dashboard.py             # Flask web dashboard
 │   ├── scheduler.py             # Automated task scheduling
-│   └── signals/
+│   ├── signals/
+│   │   ├── __init__.py
+│   │   ├── momentum.py          # 12-1 momentum signal generator
+│   │   └── rebalance.py         # Portfolio rebalancing logic
+│   └── execution/               # Automated execution module
 │       ├── __init__.py
-│       ├── momentum.py          # 12-1 momentum signal generator
-│       └── rebalance.py         # Portfolio rebalancing logic
+│       ├── engine.py            # Signal-to-execution orchestrator
+│       ├── order_manager.py     # IBKR order submission
+│       ├── position_sizer.py    # Share quantity calculations
+│       ├── risk_manager.py      # Safeguards & kill switch
+│       └── signal_logger.py     # Signal audit trail
 ├── templates/
-│   └── dashboard.html           # Web dashboard template
+│   ├── dashboard.html           # Web dashboard template
+│   └── signals.html             # Signals log page template
 ├── data/
 │   ├── executions/              # Trade execution CSVs (gitignored)
 │   ├── snapshots/               # Portfolio snapshots JSON (gitignored)
+│   ├── signals/                 # Signal logs JSON (gitignored)
 │   └── annotations/             # Trade notes (gitignored)
 │       └── monthly/             # Monthly commentary
 ├── reports/
@@ -202,6 +212,98 @@ python main.py dashboard --port 5050
 # Open http://localhost:5050
 ```
 
+## Automated Execution
+
+The system supports fully automated signal-to-execution with comprehensive safeguards.
+
+### Quick Start (Dry-Run Mode)
+
+```bash
+# Run execution pipeline in dry-run mode (default)
+python main.py execute
+
+# This will:
+# 1. Generate momentum signal
+# 2. Load current portfolio
+# 3. Calculate required trades
+# 4. Validate against risk limits
+# 5. Log everything (no actual orders)
+```
+
+### Live Mode (Requires Confirmation)
+
+```bash
+# Run in live mode (submits orders to IBKR)
+python main.py execute --live
+# Type 'CONFIRM' when prompted
+```
+
+### Configuration
+
+Add to `config/config.yaml`:
+
+```yaml
+execution:
+  mode: "dry_run"              # "dry_run" or "live"
+  order_type: "MOC"            # "MKT", "MOC", "LMT"
+
+position_sizing:
+  top_n: 3                     # Top sectors to hold
+  exit_rank_threshold: 5       # Exit when rank drops below
+
+risk_limits:
+  max_position_pct: 0.25       # 25% max single position
+  max_turnover_pct: 0.50       # 50% max daily turnover
+  kill_switch_file: "data/.kill_switch"
+```
+
+### Kill Switch
+
+Emergency trading halt:
+
+```bash
+# Check status
+python main.py kill-switch status
+
+# Activate (blocks all trading)
+python main.py kill-switch activate "Market volatility"
+
+# Deactivate (requires confirmation)
+python main.py kill-switch deactivate
+```
+
+### Dashboard Signals Page
+
+View signal history at `http://localhost:5000/signals`:
+
+- Historical signals with rankings
+- Trade decisions (buy/sell)
+- Execution status (dry-run vs live)
+- Kill switch status
+
+### Scheduled Execution
+
+The scheduler runs the execution pipeline daily after market close:
+
+```bash
+python main.py scheduler
+
+# Scheduled jobs:
+# - 16:35 UTC: Daily snapshot
+# - 16:40 UTC: Execute signals (respects dry_run config)
+# - Sunday 20:00 UTC: Weekly rebalance
+# - Sunday 21:00 UTC: Weekly report
+```
+
+### Safety Features
+
+1. **Dry-run by default** - Must explicitly enable live mode
+2. **Kill switch** - File-based emergency stop
+3. **Position limits** - Max 25% in single position
+4. **Turnover limits** - Max 50% daily turnover
+5. **Confirmation prompts** - Live mode requires "CONFIRM"
+6. **Full audit trail** - Every decision logged to `data/signals/`
+
 ## CLI Commands
 
 | Command | Description |
@@ -209,6 +311,11 @@ python main.py dashboard --port 5050
 | `python main.py signal` | Generate momentum signal, show rankings |
 | `python main.py signal --top-n 5` | Select top 5 sectors instead of 3 |
 | `python main.py rebalance` | Compare portfolio to signal, show trades |
+| `python main.py execute` | Run execution pipeline (dry-run mode) |
+| `python main.py execute --live` | Run execution pipeline (live mode) |
+| `python main.py kill-switch status` | Check kill switch status |
+| `python main.py kill-switch activate "reason"` | Activate kill switch |
+| `python main.py kill-switch deactivate` | Deactivate kill switch |
 | `python main.py pull` | Pull today's executions from IBKR |
 | `python main.py snapshot` | Save current portfolio state |
 | `python main.py stats` | Print performance summary |

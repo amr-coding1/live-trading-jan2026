@@ -20,6 +20,8 @@ from .signals.momentum import (
     display_symbol,
     SECTOR_NAMES,
 )
+from .execution.signal_logger import SignalLogger
+from .execution.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,12 @@ def create_app(config: dict) -> Flask:
         """Main dashboard view."""
         data = get_dashboard_data(config)
         return render_template("dashboard.html", **data)
+
+    @app.route("/signals")
+    def signals():
+        """Signals history view."""
+        data = get_signals_data(config)
+        return render_template("signals.html", **data)
 
     return app
 
@@ -218,6 +226,65 @@ def get_dashboard_data(config: dict) -> dict:
         "signal_data": signal_data,
         "days_to_rebalance": days_to_rebalance,
         "snapshot_timestamp": sanitized_snapshot_timestamp,
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def get_signals_data(config: dict) -> dict:
+    """Gather data for signals history page.
+
+    Args:
+        config: Application configuration dictionary.
+
+    Returns:
+        Dictionary of template variables for signals page.
+    """
+    signals_dir = config.get("signals", {}).get("log_dir", "data/signals")
+    signal_logger = SignalLogger(signals_dir)
+
+    # Get recent signals
+    signals = signal_logger.get_signals_history(limit=30)
+
+    # Get kill switch status
+    risk_manager = RiskManager(config)
+    kill_switch_active = risk_manager.is_kill_switch_active()
+    kill_switch_reason = risk_manager.get_kill_switch_reason()
+
+    # Get execution mode
+    exec_mode = config.get("execution", {}).get("mode", "dry_run")
+
+    # Format signals for display
+    formatted_signals = []
+    for sig in signals:
+        # Get trade summary
+        trades = sig.get("trades", [])
+        buy_count = sum(1 for t in trades if t.get("action") == "BUY")
+        sell_count = sum(1 for t in trades if t.get("action") == "SELL")
+
+        # Get execution results summary
+        exec_results = sig.get("execution_results", [])
+        executed_count = sum(1 for r in exec_results if r.get("status") in ("submitted", "filled", "dry_run"))
+
+        formatted_signals.append({
+            "date": sig.get("signal_date", sig.get("file_date", "Unknown")),
+            "timestamp": sig.get("timestamp", ""),
+            "mode": sig.get("execution_mode", "unknown"),
+            "top_sectors": sig.get("top_sectors", []),
+            "trade_count": len(trades),
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "executed_count": executed_count,
+            "validation_status": "Passed" if sig.get("validation", {}).get("valid", False) else "Failed",
+            "trades": trades,
+            "rankings": sig.get("rankings", []),
+        })
+
+    return {
+        "signals": formatted_signals,
+        "signal_count": len(formatted_signals),
+        "kill_switch_active": kill_switch_active,
+        "kill_switch_reason": kill_switch_reason,
+        "execution_mode": exec_mode,
         "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 

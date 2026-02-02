@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signals Log - Trading Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .card { margin-bottom: 1rem; }
+        .positive { color: #198754; }
+        .negative { color: #dc3545; }
+        .badge-dry-run { background-color: #6c757d; }
+        .badge-live { background-color: #dc3545; }
+        .table-sm td, .table-sm th { padding: 0.4rem; }
+        .signal-card { cursor: pointer; transition: background-color 0.15s; }
+        .signal-card:hover { background-color: #e9ecef; }
+        .refresh-time { font-size: 0.8rem; color: #6c757d; }
+        .kill-switch-banner { background-color: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">Signals Log</span>
+            <div>
+                <a href="/" class="btn btn-outline-light btn-sm me-2">Dashboard</a>
+                <a href="/signals" class="btn btn-light btn-sm me-2">Signals Log</a>
+                <span class="text-light refresh-time">{{ last_updated }}</span>
+            </div>
+        </div>
+    </nav>
+
+    {% if kill_switch_active %}
+    <div class="alert alert-danger kill-switch-banner mb-0 rounded-0">
+        <div class="container">
+            <strong>KILL SWITCH ACTIVE</strong> - Trading is disabled.
+            {% if kill_switch_reason %}Reason: {{ kill_switch_reason }}{% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="container">
+        <!-- Status Row -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Execution Mode</div>
+                        <div class="fs-4">
+                            {% if execution_mode == "live" %}
+                            <span class="badge bg-danger">LIVE</span>
+                            {% else %}
+                            <span class="badge bg-secondary">DRY RUN</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Kill Switch</div>
+                        <div class="fs-4">
+                            {% if kill_switch_active %}
+                            <span class="badge bg-danger">ACTIVE</span>
+                            {% else %}
+                            <span class="badge bg-success">INACTIVE</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <div class="text-muted small">Signals Logged</div>
+                        <div class="fs-4">{{ signal_count }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signals List -->
+        <div class="card">
+            <div class="card-header">
+                <strong>Signal History</strong>
+                <span class="badge bg-info float-end">Last 30 signals</span>
+            </div>
+            <div class="card-body">
+                {% if signals %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Mode</th>
+                                <th>Top Sectors</th>
+                                <th class="text-center">Trades</th>
+                                <th class="text-center">Validation</th>
+                                <th class="text-center">Executed</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sig in signals %}
+                            <tr class="signal-card" data-bs-toggle="collapse" data-bs-target="#signal-{{ loop.index }}">
+                                <td>
+                                    <strong>{{ sig.date }}</strong>
+                                    <br><small class="text-muted">{{ sig.timestamp[:16] if sig.timestamp else '' }}</small>
+                                </td>
+                                <td>
+                                    {% if sig.mode == "live" %}
+                                    <span class="badge bg-danger">LIVE</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">DRY RUN</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% for sector in sig.top_sectors[:3] %}
+                                    <span class="badge bg-primary">{{ sector.replace('.L', '') }}</span>
+                                    {% endfor %}
+                                </td>
+                                <td class="text-center">
+                                    {% if sig.buy_count > 0 %}
+                                    <span class="badge bg-success">{{ sig.buy_count }} BUY</span>
+                                    {% endif %}
+                                    {% if sig.sell_count > 0 %}
+                                    <span class="badge bg-danger">{{ sig.sell_count }} SELL</span>
+                                    {% endif %}
+                                    {% if sig.trade_count == 0 %}
+                                    <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if sig.validation_status == "Passed" %}
+                                    <span class="badge bg-success">Passed</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Failed</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {{ sig.executed_count }} / {{ sig.trade_count }}
+                                </td>
+                            </tr>
+                            <tr class="collapse" id="signal-{{ loop.index }}">
+                                <td colspan="6" class="bg-light">
+                                    <div class="p-2">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <h6>Rankings</h6>
+                                                <table class="table table-sm table-bordered mb-0">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>#</th>
+                                                            <th>Symbol</th>
+                                                            <th>Momentum</th>
+                                                            <th>Target</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for r in sig.rankings[:9] %}
+                                                        <tr class="{{ 'table-success' if r.target_weight|default(0) > 0 else '' }}">
+                                                            <td>{{ r.rank }}</td>
+                                                            <td>{{ r.symbol.replace('.L', '') if r.symbol else '' }}</td>
+                                                            <td class="{{ 'positive' if r.momentum_12_1|default(0) > 0 else 'negative' }}">
+                                                                {{ "{:+.1f}%".format((r.momentum_12_1|default(0)) * 100) }}
+                                                            </td>
+                                                            <td>{{ "{:.0f}%".format((r.target_weight|default(0)) * 100) }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <h6>Trades</h6>
+                                                {% if sig.trades %}
+                                                <table class="table table-sm table-bordered mb-0">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Action</th>
+                                                            <th>Symbol</th>
+                                                            <th>Shares</th>
+                                                            <th>Value</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for t in sig.trades %}
+                                                        <tr>
+                                                            <td>
+                                                                {% if t.action == "BUY" %}
+                                                                <span class="badge bg-success">BUY</span>
+                                                                {% else %}
+                                                                <span class="badge bg-danger">SELL</span>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td>{{ t.symbol.replace('.L', '') if t.symbol else '' }}</td>
+                                                            <td>{{ t.shares }}</td>
+                                                            <td>${{ "{:,.0f}".format(t.trade_value|default(0)) }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                                {% else %}
+                                                <p class="text-muted">No trades for this signal.</p>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <p class="text-muted mb-0">No signals logged yet.</p>
+                    <p class="text-muted small">Run <code>python main.py execute</code> to generate the first signal.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="row mt-3 mb-4">
+            <div class="col-12 text-center">
+                <small class="text-muted">
+                    <a href="/signals" class="text-decoration-none">Refresh</a>
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

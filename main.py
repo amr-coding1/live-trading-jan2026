@@ -10,6 +10,8 @@ Commands:
     slippage    Print slippage analysis
     signal      Run momentum signal, print ranked sectors
     rebalance   Compare current portfolio to signal, print trades
+    execute     Run automated execution pipeline (dry-run by default)
+    kill-switch Manage emergency trading halt
     dashboard   Start web dashboard on localhost:5000
     scheduler   Start background scheduler for automated tasks
 """
@@ -273,6 +275,90 @@ def cmd_scheduler(args: argparse.Namespace) -> None:
     run_scheduler(config, health_port=health_port)
 
 
+def cmd_execute(args: argparse.Namespace) -> None:
+    """Run execution pipeline (signal -> trades -> orders)."""
+    from src.execution.engine import ExecutionEngine, format_execution_report
+    from src.execution.risk_manager import KillSwitchActive
+
+    config = load_config()
+
+    # Determine execution mode
+    dry_run = not args.live
+    mode_str = "DRY RUN" if dry_run else "LIVE"
+
+    # Safety confirmation for live mode
+    if not dry_run:
+        print("=" * 60)
+        print("WARNING: LIVE EXECUTION MODE")
+        print("Orders will be submitted to IBKR!")
+        print("=" * 60)
+        confirm = input("Type 'CONFIRM' to proceed: ")
+        if confirm != "CONFIRM":
+            print("Aborted.")
+            sys.exit(0)
+
+    print(f"Running execution pipeline [{mode_str}]...")
+    print()
+
+    try:
+        engine = ExecutionEngine(config, dry_run=dry_run)
+        report = engine.run()
+
+        print(format_execution_report(report))
+
+        if report.success:
+            print(f"Execution complete: {len(report.trades)} trades [{mode_str}]")
+        else:
+            print(f"Execution failed: {report.error_message}")
+            sys.exit(1)
+
+    except KillSwitchActive as e:
+        print(f"BLOCKED: {e}")
+        print("Deactivate kill switch to enable trading.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def cmd_kill_switch(args: argparse.Namespace) -> None:
+    """Manage kill switch for emergency trading halt."""
+    from src.execution.risk_manager import RiskManager
+
+    config = load_config()
+    risk_manager = RiskManager(config)
+
+    if args.action == "status":
+        if risk_manager.is_kill_switch_active():
+            reason = risk_manager.get_kill_switch_reason()
+            print("Kill switch: ACTIVE")
+            print(f"Reason: {reason}")
+        else:
+            print("Kill switch: INACTIVE")
+            print("Trading is enabled.")
+
+    elif args.action == "activate":
+        reason = args.reason or "Manual activation"
+        risk_manager.activate_kill_switch(reason)
+        print(f"Kill switch ACTIVATED: {reason}")
+        print("All automated trading is now blocked.")
+
+    elif args.action == "deactivate":
+        if not risk_manager.is_kill_switch_active():
+            print("Kill switch is already inactive.")
+            return
+
+        print("WARNING: Deactivating kill switch will enable trading.")
+        confirm = input("Type 'CONFIRM' to proceed: ")
+        if confirm != "CONFIRM":
+            print("Aborted.")
+            return
+
+        risk_manager.deactivate_kill_switch()
+        print("Kill switch DEACTIVATED.")
+        print("Trading is now enabled.")
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -290,6 +376,11 @@ Examples:
   python main.py signal                   Run momentum signal
   python main.py signal --top-n 5         Select top 5 sectors
   python main.py rebalance                Generate rebalance trades
+  python main.py execute                  Run execution (dry-run mode)
+  python main.py execute --live           Run execution (LIVE mode)
+  python main.py kill-switch status       Check kill switch status
+  python main.py kill-switch activate "Market volatility"
+  python main.py kill-switch deactivate   Re-enable trading
   python main.py dashboard                Start web dashboard
   python main.py scheduler                Start background scheduler
         """,
@@ -353,10 +444,39 @@ Examples:
     )
     run_job_parser.add_argument(
         "job",
-        choices=["snapshot", "signal", "rebalance", "report"],
-        help="Job to run: snapshot, signal, rebalance, or report",
+        choices=["snapshot", "signal", "rebalance", "report", "execute"],
+        help="Job to run: snapshot, signal, rebalance, report, or execute",
     )
     run_job_parser.set_defaults(func=cmd_run_job)
+
+    # Execute command - automated signal-to-execution pipeline
+    execute_parser = subparsers.add_parser(
+        "execute",
+        help="Run automated execution pipeline (signal -> trades -> orders)",
+    )
+    execute_parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Enable LIVE mode (submits orders to IBKR). Default is dry-run.",
+    )
+    execute_parser.set_defaults(func=cmd_execute)
+
+    # Kill switch command
+    kill_switch_parser = subparsers.add_parser(
+        "kill-switch",
+        help="Manage kill switch for emergency trading halt",
+    )
+    kill_switch_parser.add_argument(
+        "action",
+        choices=["status", "activate", "deactivate"],
+        help="Action: status, activate, or deactivate",
+    )
+    kill_switch_parser.add_argument(
+        "reason",
+        nargs="?",
+        help="Reason for activation (optional)",
+    )
+    kill_switch_parser.set_defaults(func=cmd_kill_switch)
 
     stats_parser = subparsers.add_parser("stats", help="Print performance summary")
     stats_parser.add_argument(

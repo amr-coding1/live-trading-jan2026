@@ -23,6 +23,8 @@ from .execution_logger import IBKRConnection, get_portfolio_snapshot, save_snaps
 from .signals.momentum import generate_momentum_signal, format_signal_report
 from .signals.rebalance import generate_rebalance_trades, format_rebalance_report
 from .export import generate_weekly_report, get_current_week
+from .execution.engine import ExecutionEngine, format_execution_report
+from .execution.risk_manager import KillSwitchActive
 
 logger = logging.getLogger(__name__)
 
@@ -456,6 +458,92 @@ def job_weekly_report(config: dict, status: Optional[SchedulerStatus] = None) ->
         send_notification(config, "Scheduler Job Failed: weekly_report", error_msg)
 
 
+def job_execute_signals(config: dict, status: Optional[SchedulerStatus] = None) -> None:
+    """Run daily signal execution job.
+
+    Generates momentum signal, calculates trades, and executes them
+    (or logs in dry-run mode based on config).
+
+    Args:
+        config: Configuration dictionary.
+        status: Optional SchedulerStatus for tracking.
+    """
+    sched_logger = logging.getLogger("scheduler")
+    job_name = "execute_signals"
+
+    if status:
+        status.job_started(job_name)
+
+    sched_logger.info("Starting execute signals job")
+
+    # Determine execution mode from config
+    exec_config = config.get("execution", {})
+    dry_run = exec_config.get("mode", "dry_run") == "dry_run"
+    mode_str = "DRY RUN" if dry_run else "LIVE"
+
+    sched_logger.info(f"Execution mode: {mode_str}")
+
+    @with_retry(max_retries=MAX_RETRIES, base_delay=RETRY_BASE_DELAY)
+    def _run_execution():
+        engine = ExecutionEngine(config, dry_run=dry_run)
+        report = engine.run()
+        return report
+
+    try:
+        report = _run_execution()
+
+        # Format report for logging
+        report_text = format_execution_report(report)
+        for line in report_text.split("\n"):
+            sched_logger.info(line)
+
+        # Save report to log file
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        log_file = Path(config["paths"]["logs"]) / f"execution_{date_str}.txt"
+        with open(log_file, "w") as f:
+            f.write(report_text)
+
+        if report.success:
+            trade_count = len(report.trades)
+            if status:
+                status.job_completed(
+                    job_name,
+                    success=True,
+                    message=f"{mode_str}: {trade_count} trades"
+                )
+            sched_logger.info(f"Execute signals job completed: {trade_count} trades [{mode_str}]")
+
+            # Notify if trades were executed
+            if trade_count > 0:
+                send_notification(
+                    config,
+                    f"Execution Complete [{mode_str}]: {trade_count} trades",
+                    report_text[:1000]
+                )
+        else:
+            if status:
+                status.job_completed(
+                    job_name,
+                    success=False,
+                    message=report.error_message
+                )
+            sched_logger.warning(f"Execute signals job completed with issues: {report.error_message}")
+
+    except KillSwitchActive as e:
+        error_msg = f"Execution blocked by kill switch: {e}"
+        sched_logger.warning(error_msg)
+        if status:
+            status.job_completed(job_name, success=False, message=str(e))
+        send_notification(config, "Execution Blocked: Kill Switch Active", error_msg)
+
+    except Exception as e:
+        error_msg = f"Execute signals job failed: {e}"
+        sched_logger.error(error_msg)
+        if status:
+            status.job_completed(job_name, success=False, message=str(e))
+        send_notification(config, "Scheduler Job Failed: execute_signals", error_msg)
+
+
 def run_scheduler(config: dict, health_port: int = 8080) -> None:
     """Start the background scheduler with health monitoring.
 
@@ -486,13 +574,21 @@ def run_scheduler(config: dict, health_port: int = 8080) -> None:
     # Get schedule times from config or use defaults
     sched_config = config.get("scheduler", {})
     snapshot_time = sched_config.get("snapshot_time", "16:35")
+    execute_time = sched_config.get("execute_time", "16:40")
     rebalance_day = sched_config.get("rebalance_day", "sunday")
     rebalance_time = sched_config.get("rebalance_time", "20:00")
     report_time = sched_config.get("report_time", "21:00")
 
+    # Get execution mode for display
+    exec_mode = config.get("execution", {}).get("mode", "dry_run")
+
     # Daily snapshot (after market close)
     schedule.every().day.at(snapshot_time).do(job_daily_snapshot, config=config, status=status)
     sched_logger.info(f"Scheduled: Daily snapshot at {snapshot_time} UTC")
+
+    # Daily execution (after snapshot)
+    schedule.every().day.at(execute_time).do(job_execute_signals, config=config, status=status)
+    sched_logger.info(f"Scheduled: Daily execution at {execute_time} UTC (mode: {exec_mode})")
 
     # Weekly rebalance signal (Sunday evening to prepare for Monday)
     getattr(schedule.every(), rebalance_day).at(rebalance_time).do(
@@ -510,6 +606,7 @@ def run_scheduler(config: dict, health_port: int = 8080) -> None:
     print("Scheduler started. Press Ctrl+C to stop.")
     print("Scheduled jobs:")
     print(f"  - Daily snapshot at {snapshot_time} UTC")
+    print(f"  - Daily execution at {execute_time} UTC (mode: {exec_mode})")
     print(f"  - Weekly rebalance on {rebalance_day} at {rebalance_time} UTC")
     print(f"  - Weekly report on {rebalance_day} at {report_time} UTC")
     print(f"\nHealth check: http://127.0.0.1:{health_port}/health")
@@ -552,7 +649,7 @@ def run_job_now(config: dict, job_name: str) -> None:
 
     Args:
         config: Configuration dictionary.
-        job_name: Name of job to run ("snapshot", "signal", "rebalance", "report").
+        job_name: Name of job to run ("snapshot", "signal", "rebalance", "report", "execute").
     """
     setup_scheduler_logging(config)
 
@@ -568,9 +665,11 @@ def run_job_now(config: dict, job_name: str) -> None:
         job_weekly_rebalance(config, status=status)
     elif job_name == "report":
         job_weekly_report(config, status=status)
+    elif job_name == "execute":
+        job_execute_signals(config, status=status)
     else:
         print(f"Unknown job: {job_name}")
-        print("Available jobs: snapshot, signal, rebalance, report")
+        print("Available jobs: snapshot, signal, rebalance, report, execute")
 
 
 def check_tws_connection(config: dict) -> bool:

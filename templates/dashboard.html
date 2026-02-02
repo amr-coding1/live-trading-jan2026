@@ -22,7 +22,11 @@
     <nav class="navbar navbar-dark bg-dark mb-4">
         <div class="container">
             <span class="navbar-brand mb-0 h1">Trading Dashboard</span>
-            <span class="text-light refresh-time">Last updated: {{ last_updated }}</span>
+            <div>
+                <a href="/" class="btn btn-outline-light btn-sm me-2">Dashboard</a>
+                <a href="/signals" class="btn btn-outline-light btn-sm me-2">Signals Log</a>
+                <span class="text-light refresh-time">{{ last_updated }}</span>
+            </div>
         </div>
     </nav>
 
