@@ -38,7 +38,7 @@ services:
         condition: service_healthy
     environment:
       - IB_HOST=ib-gateway
-      - IB_PORT=4002
+      - IB_PORT=4004
       - PYTHONUNBUFFERED=1
     volumes:
       - ./config:/app/config:ro        # Config (read-only)
