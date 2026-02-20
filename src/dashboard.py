@@ -145,19 +145,15 @@ def get_signal_data() -> list[dict]:
 
 
 def calculate_days_to_rebalance() -> int:
-    """Calculate days until 1st of next month.
+    """Calculate days until next Sunday (weekly rebalance day).
 
     Returns:
-        Number of days until rebalance date.
+        Number of days until next rebalance (0 if today is Sunday).
     """
     today = date.today()
-
-    if today.month == 12:
-        next_rebalance = date(today.year + 1, 1, 1)
-    else:
-        next_rebalance = date(today.year, today.month + 1, 1)
-
-    return (next_rebalance - today).days
+    # Sunday is weekday 6
+    days_until_sunday = (6 - today.weekday()) % 7
+    return days_until_sunday
 
 
 def get_dashboard_data(config: dict) -> dict:

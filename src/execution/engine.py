@@ -116,6 +116,27 @@ class ExecutionEngine:
                     "No portfolio snapshot found. Run 'python main.py snapshot' first."
                 )
 
+            # Stale snapshot protection: reject snapshots older than 48 hours
+            snapshot_ts = snapshot.get("timestamp", "")
+            if snapshot_ts:
+                try:
+                    snap_dt = datetime.fromisoformat(snapshot_ts.replace("Z", "+00:00"))
+                    age_hours = (datetime.now(timezone.utc) - snap_dt).total_seconds() / 3600
+                    if age_hours > 48:
+                        raise ValueError(
+                            f"Snapshot is {age_hours:.0f} hours old (from {snapshot_ts}). "
+                            f"Maximum allowed age is 48 hours. "
+                            f"Run 'python main.py snapshot' to refresh."
+                        )
+                    elif age_hours > 24:
+                        logger.warning(
+                            f"Snapshot is {age_hours:.0f} hours old — consider refreshing"
+                        )
+                except (ValueError, TypeError) as e:
+                    if "Snapshot is" in str(e):
+                        raise
+                    logger.warning(f"Could not parse snapshot timestamp: {snapshot_ts}")
+
             total_equity = snapshot.get("total_equity", 0)
             cash = snapshot.get("cash", 0)
             current_weights = get_current_weights(snapshot)

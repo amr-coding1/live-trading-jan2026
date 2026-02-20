@@ -117,8 +117,12 @@ class IBKRConnection:
         self.ib = IB()
         self._connected = False
 
-    def connect(self, max_retries: int = 3) -> bool:
+    def connect(self, max_retries: int = 2) -> bool:
         """Connect to IBKR TWS/Gateway with retry logic.
+
+        Supports environment variable overrides for Docker deployment:
+        - IB_HOST: Override broker host (default: config value)
+        - IB_PORT: Override broker port (default: config value)
 
         Args:
             max_retries: Maximum connection attempts.
@@ -126,20 +130,25 @@ class IBKRConnection:
         Returns:
             True if connected successfully, False otherwise.
         """
+        import os
         broker_config = self.config["broker"]
+
+        # Environment variable overrides for Docker
+        host = os.environ.get("IB_HOST", broker_config["host"])
+        port = int(os.environ.get("IB_PORT", str(broker_config["port"])))
 
         for attempt in range(max_retries):
             try:
                 self.ib.connect(
-                    host=broker_config["host"],
-                    port=broker_config["port"],
+                    host=host,
+                    port=port,
                     clientId=broker_config["client_id"],
                     timeout=broker_config.get("timeout", 30),
                     readonly=broker_config.get("readonly", False),
                 )
                 self._connected = True
                 logger.info(
-                    f"Connected to IBKR at {broker_config['host']}:{broker_config['port']}"
+                    f"Connected to IBKR at {host}:{port}"
                 )
                 return True
             except Exception as e:
@@ -447,6 +456,25 @@ def get_portfolio_snapshot(ib: IB) -> dict:
 
     total_equity = float(account_values.get("NetLiquidation", 0))
     cash = float(account_values.get("TotalCashValue", 0))
+
+    # Integrity validation: catch cases where IBKR didn't return positions
+    # Note: IBKR's NetLiquidation != cash + sum(market_value) exactly,
+    # because of margin, unsettled cash, etc. So we check for the specific
+    # failure mode: equity >> cash but no positions loaded.
+    positions_value = sum(p.get("market_value", 0) for p in positions)
+    if total_equity > 0 and len(positions) == 0 and total_equity > cash * 1.1:
+        missing_value = total_equity - cash
+        logger.error(
+            f"SNAPSHOT INTEGRITY FAILURE: equity={total_equity:,.2f} but "
+            f"no positions loaded and cash={cash:,.2f}. "
+            f"Missing ~{missing_value:,.2f} in unloaded positions. "
+            f"IBKR API likely returned empty positions list."
+        )
+        raise ValueError(
+            f"Snapshot integrity check failed: equity ({total_equity:,.2f}) is "
+            f"significantly higher than cash ({cash:,.2f}) but 0 positions loaded. "
+            f"IBKR may not have returned positions correctly."
+        )
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  # ── IB Gateway (headless IBKR connection) ──────────────────────
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${IB_USERNAME}
+      TWS_PASSWORD: ${IB_PASSWORD}
+      TRADING_MODE: ${IB_TRADING_MODE:-paper}  # "paper" or "live"
+      TWS_ACCEPT_INCOMING: "accept"
+      READ_ONLY_API: "no"
+      VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-trader123}
+      TWS_PORT: "4002"               # Gateway paper port
+      TWS_LIVE_PORT: "4001"          # Gateway live port
+    ports:
+      - "4001:4001"   # Live trading API
+      - "4002:4002"   # Paper trading API
+      - "5900:5900"   # VNC (for debugging - disable in production)
+    volumes:
+      - ib-gateway-data:/root/Jts
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4002"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s    # IB Gateway takes time to start
+      retries: 5
+    networks:
+      - trading-net
+
+  # ── Trading Scheduler ──────────────────────────────────────────
+  trading-scheduler:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      ib-gateway:
+        condition: service_healthy
+    environment:
+      - IB_HOST=ib-gateway
+      - IB_PORT=4002
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config:/app/config:ro        # Config (read-only)
+      - trading-data:/app/data         # Persistent data
+      - trading-logs:/app/logs         # Persistent logs
+      - trading-reports:/app/reports   # Persistent reports
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      - trading-net
+
+  # ── Dashboard (optional, for monitoring) ───────────────────────
+  dashboard:
+    build: .
+    restart: unless-stopped
+    command: ["python", "main.py", "dashboard", "--host", "0.0.0.0", "--port", "5050"]
+    depends_on:
+      - trading-scheduler
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./config:/app/config:ro
+      - trading-data:/app/data:ro
+      - trading-logs:/app/logs:ro
+      - trading-reports:/app/reports:ro
+    networks:
+      - trading-net
+
+volumes:
+  ib-gateway-data:
+  trading-data:
+  trading-logs:
+  trading-reports:
+
+networks:
+  trading-net:
+    driver: bridge

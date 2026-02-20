@@ -138,7 +138,8 @@ class RiskManager:
         """
         symbol = trade.get("symbol", "UNKNOWN")
         action = trade.get("action", "")
-        shares = trade.get("shares_to_trade", 0)
+        # Support both key names: "shares" (from engine) and "shares_to_trade" (legacy)
+        shares = trade.get("shares", trade.get("shares_to_trade", 0))
         price = trade.get("price", 0)
 
         # Calculate trade value
@@ -231,7 +232,7 @@ class RiskManager:
                 rejected_count += 1
 
             # Calculate turnover contribution
-            shares = trade.get("shares_to_trade", 0)
+            shares = trade.get("shares", trade.get("shares_to_trade", 0))
             price = trade.get("price", 0)
             total_turnover += shares * price if shares and price else 0
 

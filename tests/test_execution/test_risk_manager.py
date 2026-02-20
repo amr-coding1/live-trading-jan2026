@@ -60,7 +60,7 @@ class TestRiskManager:
             risk_manager.check_kill_switch()
 
     def test_validate_trade_valid(self, risk_manager):
-        """Test valid trade passes validation."""
+        """Test valid trade passes validation with legacy key."""
         trade = {
             "symbol": "SXLK.L",
             "action": "BUY",
@@ -69,6 +69,22 @@ class TestRiskManager:
         }
         result = risk_manager.validate_trade(trade, total_equity=100000)
         assert result.valid
+
+    def test_validate_trade_valid_with_shares_key(self, risk_manager):
+        """Test valid trade passes validation with 'shares' key (engine format).
+
+        This is the critical regression test for the shares/shares_to_trade
+        key mismatch bug that caused all trades to fail validation.
+        """
+        trade = {
+            "symbol": "SXLK.L",
+            "action": "BUY",
+            "shares": 100,
+            "price": 150,
+        }
+        result = risk_manager.validate_trade(trade, total_equity=100000)
+        assert result.valid
+        assert result.details["trade_value"] == 15000
 
     def test_validate_trade_exceeds_position_limit(self, risk_manager):
         """Test trade rejected when exceeding position limit."""
@@ -107,6 +123,27 @@ class TestRiskManager:
             current_positions={},
         )
         assert result.valid
+
+    def test_validate_batch_passes_with_shares_key(self, risk_manager):
+        """Test valid batch passes with 'shares' key (engine format).
+
+        Critical regression test: the engine produces trade dicts with
+        'shares' not 'shares_to_trade'. Both must work for validation
+        AND turnover calculation.
+        """
+        trades = [
+            {"symbol": "SXLK.L", "action": "BUY", "shares": 50, "price": 150},
+            {"symbol": "SXLI.L", "action": "SELL", "shares": 30, "price": 100},
+        ]
+        result = risk_manager.validate_batch(
+            trades=trades,
+            total_equity=100000,
+            current_positions={},
+        )
+        assert result.valid
+        # Verify turnover is correctly calculated (not 0)
+        # 50*150 + 30*100 = 10500, turnover = 10500/100000 = 10.5%
+        assert result.total_turnover_pct == pytest.approx(0.105, abs=0.001)
 
     def test_validate_batch_exceeds_turnover(self, risk_manager):
         """Test batch rejected when exceeding turnover limit."""
