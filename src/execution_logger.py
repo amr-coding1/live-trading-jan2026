@@ -443,7 +443,7 @@ def get_portfolio_snapshot(ib: IB) -> dict:
         unrealized_pnl = market_value - (pos.position * pos.avgCost)
 
         positions.append({
-            "symbol": pos.contract.symbol,
+            "symbol": pos.contract.symbol if pos.contract.symbol.endswith(".L") else f"{pos.contract.symbol}.L",
             "quantity": pos.position,
             "avg_cost": pos.avgCost,
             "market_price": market_price,

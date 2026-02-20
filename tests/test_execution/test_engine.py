@@ -51,7 +51,7 @@ def sample_snapshot(config):
         "cash": 35000,
         "positions": [
             {
-                "symbol": "SXLK",
+                "symbol": "SXLK.L",
                 "quantity": 100,
                 "avg_cost": 150,
                 "market_price": 160,
@@ -59,7 +59,7 @@ def sample_snapshot(config):
                 "unrealized_pnl": 1000,
             },
             {
-                "symbol": "SXLI",
+                "symbol": "SXLI.L",
                 "quantity": 200,
                 "avg_cost": 70,
                 "market_price": 75,
