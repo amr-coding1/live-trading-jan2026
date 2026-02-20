@@ -21,7 +21,7 @@ services:
     volumes:
       - ib-gateway-data:/root/Jts
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "4002"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/4002'"]
       interval: 30s
       timeout: 10s
       start_period: 120s    # IB Gateway takes time to start
